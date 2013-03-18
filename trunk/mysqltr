@@ -1,0 +1,348 @@
+#!/bin/bash
+#
+# This script creates an new mirriored database and convert all tables and data into ecnoding of the users choosing
+# Copyright (C) 2013 Seth Fleming seth@aphpf.de
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+# 
+# 
+# USE:
+# $ encodedb --from=user@host:port/dbname [--from-passwd=pass] 
+#            --to=user@host:port/dbname [--to-passwd=pass] 
+#            --encoding=encoding 
+#            --collation=collation
+#            --engine=engine type
+#            --blacklist=table(s) 
+#            --whitelist=table(s) 
+#            --help 
+#            --silent 
+#
+
+##
+# Check if database exists
+# @param string new | old
+# @echos integer
+#
+function db_exists()
+{
+    if [ "$1" == "o" ]; then 
+        mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT -se "use $OLD_DB" 2> /dev/null;
+    else
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -se "use $NEW_DB" 2> /dev/null;
+    fi
+    if [ $? -eq 0 ]; then
+        local status=1;
+    else
+        local status=0;
+    fi
+    echo $status;
+}
+
+##
+# Create a new database
+#
+function db_create()
+{
+    if [ `db_exists n` -eq 0 ]; then
+        
+        #create databsae with proper encoding
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -Bse "CREATE DATABASE $NEW_DB; ALTER DATABASE $NEW_DB DEFAULT CHARACTER SET $ENCODING COLLATE $COLLATION";
+        if [ $? -eq 0 ]; then
+            show_message 1 "Database $NEW_DB successfully created!"
+            local status=0
+        else
+            show_message 2 "Database $NEW_DB could not be created!"
+            local status=1
+        fi
+    else
+        local status=0
+    fi
+    return $status;
+}
+
+##
+# Drop a database
+#
+function db_drop()
+{
+    if [ $NEW_DB_EXISTS -eq 1 ]; then
+        
+        #create databsae with proper encoding
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -Bse "DROP DATABASE $NEW_DB;";
+        if [ $? -eq 0 ]; then
+            show_message 1 "Database $NEW_DB successfully dropped!"
+            local status=0
+        else
+            show_message 2 "Database $NEW_DB could not be dropped!"
+            local status=1
+        fi
+    else
+        show_message 2 "Database $NEW_DB does not exist!"
+        local status=2
+    fi
+    return $status;
+}
+
+##
+# Import the old to new database structure. Change the encoding and collation
+# 
+function db_import_structure()
+{
+    #import the structure and change the structure to utf8
+    show_message 1 "Importing Structure from $OLD_DB to $NEW_DB";
+    mysqldump -d -u$OLD_DB_USER -p$OLD_DB_PASS $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql -u$NEW_DB_USER -p$NEW_DB_PASS $NEW_DB;
+    if [ $? -eq 0 ]; then
+        show_message 1 "Database structure successfully imported!"
+    else
+        show_message 2 "Database structure could not be imported!"
+        exit 1;
+    fi
+    return 0;
+}
+
+##
+# Import  all table data into the new database
+#
+function db_import_tables()
+{
+    #get the tables from the old database
+    local tables=`mysql -u$OLD_DB_USER -p$OLD_DB_PASS $OLD_DB -Bse 'SHOW TABLES;'`;
+    
+    #iterate through the tables
+    for table in $tables; do
+        local break=0;
+
+        #blacklist table data?
+        for exclude in $BLKLIST; do
+            if [ "$exclude" == "$table" ]; then
+                break=1;
+                show_message 1 "Blacklisted: $table":
+            fi
+        done
+
+        #whitelist table data?
+        for include in $WHTLIST; do
+            if [ "$include" != "$table" ]; then
+                break=1;
+                show_message 1 "Blacklisted: $table":
+            fi
+        done
+    
+        if [ $break -eq 0 ]; then
+        
+            #import data from table
+            db_import_table `echo $table | sed "s#$NEW_DB\.\(.*\)#\1#g"`;
+        else
+        
+            #remove unwanted tables
+            mysql -u$NEW_DB_USER -p$NEW_DB_PASS $NEW_DB -Bse "DROP TABLE $table;";
+        fi
+    done
+}
+
+##
+# Import a single talble into the new database
+# @param string $1 the table name
+#
+function db_import_table()
+{
+    local table=$1;
+    
+    #skip an entry in the loop?
+    break=0;
+
+    #blacklist table data?
+    for exclude in $BLKLIST; do
+        if [ "$exclude" == "$table" ]; then
+            break=1;
+            show_message 1 "Blacklisted: $table":
+        fi
+    done
+
+    #whitelist table data?
+    for include in $WHTLIST; do
+        if [ "$include" != "$table" ]; then
+            break=1;
+            show_message 1 "Blacklisted: $table":
+        fi
+    done
+
+    # import and encode the table data
+    if [ $break -eq 0 ]; then
+
+        # import the data
+        show_message 1 "Importing Table: $table"
+        mysqldump -u$OLD_DB_USER -p$OLD_DB_PASS --default-character-set=$ENCODING --no-create-db --no-create-info $OLD_DB $table | sed -f ./filters/chars.sed | mysql -u$NEW_DB_USER -p$NEW_DB_PASS $NEW_DB;
+        show_message 1 "Import successful: $table"
+    fi
+}
+
+##
+# Echo a message to the console
+# @param integer $1 std out buffer
+# @param string $2 Message to dispay
+#
+function show_message()
+{
+    if [ "$VERBOSE" == 1 ]; then
+        if [ $1 -eq 1 ]; then
+            echo "* "$2;
+        else
+            echo "ERROR: "$2 >&2;
+        fi
+    fi
+}
+
+##
+# Get the key value
+#
+function get_value_by_key()
+{
+    for ((j=0; j<"${#keys[*]}"; j++));
+    do
+        if [ "${keys[$j]}" == "$1" ]; then
+            if [ "${values[$j]}" == "" ]; then
+                echo $3;
+            else
+                echo "${values[$j]}";
+            fi
+            return 0;
+        fi
+    done
+    echo $2;
+}
+
+#get the main action
+ARGS=`echo $@`;
+
+#get the long arguments
+i=0;
+for opt in $ARGS;
+do
+    if echo $opt | grep -Eq '^--'; then
+        OIFS=$IFS;
+        IFS="= ";
+        data=(`echo $opt | sed s/^--//g`);
+        keys[$i]=${data[0]};
+        values[$i]=${data[1]};
+        IFS=$OIFS;
+        ARGS=`echo $ARGS | sed s#$opt##`;
+        i=$[ $i + 1 ];
+    fi
+done
+
+#get the sub action
+for opt in ${keys[*]}; do
+
+    #set sub action type
+    case $opt in
+    to)
+        NEW_DB_USER=`get_value_by_key to | sed 's#\(^[^@]*\)@.*#\1#g'`;
+        NEW_DB_HOST=`get_value_by_key to | sed 's#^[^@]*@\([^/]*\)/.*#\1#g'`;
+        NEW_DB_PORT=`echo $NEW_DB_HOST | sed 's#^[^:]*:\([0-9]*\)#\1#g'`;
+        if [ "$NEW_DB_HOST" == "$NEW_DB_PORT" ] || [ "$NEW_DB_PORT" == "" ]; then
+            NEW_DB_PORT=3306;
+        else
+            NEW_DB_HOST=`echo $NEW_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
+        fi
+        NEW_DB=`get_value_by_key to | sed 's#^[^@]*@[^/]*/\(.*\)#\1#g'`;
+    ;;
+    from)
+        OLD_DB_USER=`get_value_by_key from | sed 's#\(^[^@]*\)@.*#\1#g'`;
+        OLD_DB_HOST=`get_value_by_key from | sed 's#^[^@]*@\([^/]*\)/.*#\1#g'`;
+        OLD_DB_PORT=`echo $NEW_DB_HOST | sed 's#^[^:]*:\([0-9]+\)#\1#g'`;
+        if [ "$OLD_DB_HOST" == "$OLD_DB_PORT" ] || [ "$OLD_DB_PORT" == "" ]; then
+            OLD_DB_PORT=3306;
+        else
+            OLD_DB_HOST=`echo $NEW_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
+        fi
+        OLD_DB=`get_value_by_key from | sed 's#^[^@]*@[^/]*/\(.*\)#\1#g'`;
+    ;;
+    esac
+done
+
+#verbosity
+VERBOSE=`get_value_by_key silent 1 0`;
+
+#encoding
+ENCODING=`get_value_by_key encoding utf8`;
+
+#table collocation
+COLLATION=`get_value_by_key collation utf8_unicode_ci`;
+
+#old database passowrd
+OLD_DB_PASS=`get_value_by_key from-passwd`;
+
+#new database password
+NEW_DB_PASS=`get_value_by_key to-passwd`;
+
+#set the database engine
+ENGINE=`get_value_by_key engine InnoDB`;
+
+#set the table blacklist
+BLKLIST=`get_value_by_key blacklist`;
+
+#set the table whitelist
+WHTLIST=`get_value_by_key whitelist`;
+
+#get the old database password
+if [ "$OLD_DB" != "" ] && [ "$OLD_DB_PASS" == "" ]; then
+    echo -n "Password for $OLD_DB: ";
+    read -s OLD_DB_PASS;
+    echo "";
+fi
+
+#old database exists?
+OLD_DB_EXISTS=`db_exists o`;
+
+if [ $OLD_DB_EXISTS -eq 0 ]; then
+    show_message 2 "Database $OLD_DB doesn't exist!";
+    exit 1
+fi
+
+#get the new database password
+if [ "$NEW_DB" != "" ] && [ "$NEW_DB_PASS" == "" ]; then
+    echo -n "Password for $NEW_DB: ";
+    read -s NEW_DB_PASS;
+    echo "";
+fi
+
+#old database exists?
+NEW_DB_EXISTS=`db_exists n`;
+
+#check if new database exists
+if [ $NEW_DB_EXISTS -eq 1 ];then
+    echo -n "Database $NEW_DB already exists. Would you overwrite this database? [y/n]: "
+    read proceed;
+    case $proceed in
+    y|Y) 
+        #drop the new database
+        db_drop;
+        
+        #create the new database
+        db_create
+    ;;
+    *)
+        show_message 2 "Encoding cancelled!";
+        exit 1;
+    ;;
+    esac
+else
+
+    #create the new database
+    db_create
+fi
+
+#create the new database
+db_import_structure && db_import_tables;
