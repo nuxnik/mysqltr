@@ -262,7 +262,6 @@ for opt in ${keys[*]}; do
         OLD_DB_HOST=`get_value_by_key from | sed 's#^[^@]*@\([^/]*\)/.*#\1#g'`;
         OLD_DB_PORT=`echo $OLD_DB_HOST | sed 's#^[^:]*:\([0-9]*\)#\1#g'`;
         OLD_DB_HOST=`echo $OLD_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
-        echo $OLD_DB_PORT;
         if [ "$OLD_DB_HOST" == "$OLD_DB_PORT" ] || [ "$OLD_DB_PORT" == "" ]; then
             OLD_DB_PORT=3306;
         fi
