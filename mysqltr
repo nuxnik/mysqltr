@@ -183,7 +183,7 @@ function db_import_table()
 
         # import the data
         show_message 1 "Importing Table: $table"
-        mysqldump -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT --default-character-set=$ENCODING --no-create-db --no-create-info $OLD_DB $table | sed -f ./filters/chars.sed | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
+        mysqldump -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT --default-character-set=$ENCODING --no-create-db --no-create-info $OLD_DB $table | sed -f ./filters/filter.sed | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
         show_message 1 "Import successful: $table"
     fi
 }
