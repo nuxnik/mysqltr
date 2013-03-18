@@ -37,9 +37,9 @@
 function db_exists()
 {
     if [ "$1" == "o" ]; then 
-        mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT -se "use $OLD_DB" 2> /dev/null;
+        mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT -se "use $OLD_DB";
     else
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -se "use $NEW_DB" 2> /dev/null;
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -se "use $NEW_DB";
     fi
     if [ $? -eq 0 ]; then
         local status=1;
@@ -57,7 +57,7 @@ function db_create()
     if [ `db_exists n` -eq 0 ]; then
         
         #create databsae with proper encoding
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -Bse "CREATE DATABASE $NEW_DB; ALTER DATABASE $NEW_DB DEFAULT CHARACTER SET $ENCODING COLLATE $COLLATION";
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -Bse "CREATE DATABASE $NEW_DB; ALTER DATABASE $NEW_DB DEFAULT CHARACTER SET $ENCODING COLLATE $COLLATION";
         if [ $? -eq 0 ]; then
             show_message 1 "Database $NEW_DB successfully created!"
             local status=0
@@ -79,7 +79,7 @@ function db_drop()
     if [ $NEW_DB_EXISTS -eq 1 ]; then
         
         #create databsae with proper encoding
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -Bse "DROP DATABASE $NEW_DB;";
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -Bse "DROP DATABASE $NEW_DB;";
         if [ $? -eq 0 ]; then
             show_message 1 "Database $NEW_DB successfully dropped!"
             local status=0
@@ -101,7 +101,7 @@ function db_import_structure()
 {
     #import the structure and change the structure to utf8
     show_message 1 "Importing Structure from $OLD_DB to $NEW_DB";
-    mysqldump -d -u$OLD_DB_USER -p$OLD_DB_PASS $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql -u$NEW_DB_USER -p$NEW_DB_PASS $NEW_DB;
+    mysqldump -d -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
     if [ $? -eq 0 ]; then
         show_message 1 "Database structure successfully imported!"
     else
@@ -117,7 +117,7 @@ function db_import_structure()
 function db_import_tables()
 {
     #get the tables from the old database
-    local tables=`mysql -u$OLD_DB_USER -p$OLD_DB_PASS $OLD_DB -Bse 'SHOW TABLES;'`;
+    local tables=`mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT $OLD_DB -Bse 'SHOW TABLES;'`;
     
     #iterate through the tables
     for table in $tables; do
@@ -146,7 +146,7 @@ function db_import_tables()
         else
         
             #remove unwanted tables
-            mysql -u$NEW_DB_USER -p$NEW_DB_PASS $NEW_DB -Bse "DROP TABLE $table;";
+            mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB -Bse "DROP TABLE $table;";
         fi
     done
 }
@@ -183,7 +183,7 @@ function db_import_table()
 
         # import the data
         show_message 1 "Importing Table: $table"
-        mysqldump -u$OLD_DB_USER -p$OLD_DB_PASS --default-character-set=$ENCODING --no-create-db --no-create-info $OLD_DB $table | sed -f ./filters/chars.sed | mysql -u$NEW_DB_USER -p$NEW_DB_PASS $NEW_DB;
+        mysqldump -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT --default-character-set=$ENCODING --no-create-db --no-create-info $OLD_DB $table | sed -f ./filters/chars.sed | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
         show_message 1 "Import successful: $table"
     fi
 }
@@ -251,21 +251,20 @@ for opt in ${keys[*]}; do
         NEW_DB_USER=`get_value_by_key to | sed 's#\(^[^@]*\)@.*#\1#g'`;
         NEW_DB_HOST=`get_value_by_key to | sed 's#^[^@]*@\([^/]*\)/.*#\1#g'`;
         NEW_DB_PORT=`echo $NEW_DB_HOST | sed 's#^[^:]*:\([0-9]*\)#\1#g'`;
+        NEW_DB_HOST=`echo $NEW_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
         if [ "$NEW_DB_HOST" == "$NEW_DB_PORT" ] || [ "$NEW_DB_PORT" == "" ]; then
             NEW_DB_PORT=3306;
-        else
-            NEW_DB_HOST=`echo $NEW_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
         fi
         NEW_DB=`get_value_by_key to | sed 's#^[^@]*@[^/]*/\(.*\)#\1#g'`;
     ;;
     from)
         OLD_DB_USER=`get_value_by_key from | sed 's#\(^[^@]*\)@.*#\1#g'`;
         OLD_DB_HOST=`get_value_by_key from | sed 's#^[^@]*@\([^/]*\)/.*#\1#g'`;
-        OLD_DB_PORT=`echo $NEW_DB_HOST | sed 's#^[^:]*:\([0-9]+\)#\1#g'`;
+        OLD_DB_PORT=`echo $OLD_DB_HOST | sed 's#^[^:]*:\([0-9]*\)#\1#g'`;
+        OLD_DB_HOST=`echo $OLD_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
+        echo $OLD_DB_PORT;
         if [ "$OLD_DB_HOST" == "$OLD_DB_PORT" ] || [ "$OLD_DB_PORT" == "" ]; then
             OLD_DB_PORT=3306;
-        else
-            OLD_DB_HOST=`echo $NEW_DB_HOST | sed 's#^\([^:]*\):.*#\1#g'`;
         fi
         OLD_DB=`get_value_by_key from | sed 's#^[^@]*@[^/]*/\(.*\)#\1#g'`;
     ;;
