@@ -37,9 +37,9 @@
 function db_exists()
 {
     if [ "$1" == "o" ]; then 
-        mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT -se "use $OLD_DB";
+        mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT -se "use $OLD_DB" 2> /dev/null;
     else
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -se "use $NEW_DB";
+        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -se "use $NEW_DB" 2> /dev/null;
     fi
     if [ $? -eq 0 ]; then
         local status=1;
