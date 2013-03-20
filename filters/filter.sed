@@ -1,7 +1,8 @@
 # 
 # mysqltr - Stream edit your database
 #
-# This script creates an new mirriored database and convert all tables and data into ecnoding of the users choosing
+# sed syntax regex filters
+#
 # Copyright (C) 2013 Seth Fleming <seth@aphpf.de>
 #
 # This program is free software: you can redistribute it and/or modify
@@ -21,19 +22,16 @@
 #
 # EXAMPLE:
 #
-# Replace HTML entites for german umlauts.
+# Replace HTML entites for ampersand, german umlauts and quotes.
 #
-#s/&amp;/\&/ig
-#s/&auml;/ä/g
-#s/&Auml;/Ä/g
-#s/&ouml;/ö/ig
-#s/&Ouml;/Ö/ig
-#s/&uuml;/ü/ig
-#s/&Uuml;/Ü/ig
-#s/&szlig;/ß/g
-#
-# Replace quotes
-#
-#s#&quot;#"#g
-#s#&ldquo;#"#g
-#s#&bdquo;#"#g
+# s/&amp;/\&/ig
+# s/&auml;/ä/g
+# s/&Auml;/Ä/g
+# s/&ouml;/ö/ig
+# s/&Ouml;/Ö/ig
+# s/&uuml;/ü/ig
+# s/&Uuml;/Ü/ig
+# s/&szlig;/ß/g
+# s#&quot;#"#g
+# s#&ldquo;#"#g
+# s#&bdquo;#"#g

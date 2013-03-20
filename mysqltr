@@ -1,7 +1,10 @@
 #!/bin/bash
 #
+# mysqltr - Stream edit your database
+#
 # This script creates an new mirriored database and convert all tables
 # and data into encoding of the users choosing
+#
 # Copyright (C) 2013 Seth Fleming seth@aphpf.de
 #
 # This program is free software: you can redistribute it and/or modify
@@ -35,6 +38,14 @@
 #            --silent 
 #
 
+#the current version
+VERSION=0.1.1;
+
+#number of tables
+TAB_TOTL=0;
+TAB_CONV=0;
+TAB_SKIP=0;
+
 ##
 # Check if database exists
 # @param string new | old
@@ -65,10 +76,10 @@ function db_create()
         #create databsae with proper encoding
         mysql `get_credentials n` -Bse "CREATE DATABASE \`$NEW_DB\`; ALTER DATABASE \`$NEW_DB\` DEFAULT CHARACTER SET $ENCODING COLLATE $COLLATION;";
         if [ $? -eq 0 ]; then
-            show_message 1 "Database $NEW_DB successfully created!"
+            show_message 1 "SUCCESS: $NEW_DB created"
             local status=0
         else
-            show_message 2 "Database $NEW_DB could not be created!"
+            show_message 2 "FAILURE: $NEW_DB not created"
             local status=1
         fi
     else
@@ -87,14 +98,14 @@ function db_drop()
         #create databsae with proper encoding
         mysql `get_credentials n` -Bse "DROP DATABASE \`$NEW_DB\`;";
         if [ $? -eq 0 ]; then
-            show_message 1 "Database $NEW_DB successfully dropped!"
+            show_message 1 "SUCCESS: $NEW_DB dropped"
             local status=0
         else
-            show_message 2 "Database $NEW_DB could not be dropped!"
+            show_message 2 "FAILURE: $NEW_DB not dropped"
             local status=1
         fi
     else
-        show_message 2 "Database $NEW_DB does not exist!"
+        show_message 2 "FAILURE: Could not connect to $NEW_DB"
         local status=2
     fi
     return $status;
@@ -106,12 +117,12 @@ function db_drop()
 function db_import_structure()
 {
     #import the structure and change the structure to utf8
-    show_message 1 "Importing Structure from $OLD_DB to $NEW_DB";
+    show_message 1 "IMPORTING: $OLD_DB => $NEW_DB";
     mysqldump -d `get_credentials o` $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql `get_credentials n` $NEW_DB;
     if [ $? -eq 0 ]; then
-        show_message 1 "Database structure successfully imported!"
+        show_message 1 "FINISHED: Database Structure"
     else
-        show_message 2 "Database structure could not be imported!"
+        show_message 2 "FAILURE: Database Structure"
         exit 1;
     fi
     return 0;
@@ -133,12 +144,16 @@ function db_import_tables()
         local black=0;
 
         if [ -f "$WHTLIST_FILE" ]; then
-            local contents=`cat $WHTLIST_FILE`;
+
+            #read contents and remove comments
+            local contents=`cat $WHTLIST_FILE | grep -v '^#'`;
             WHTLIST=`echo $contents $WHTLIST | tr ' ' ','`;
         fi
 
         if [ -f "$BLKLIST_FILE" ]; then
-            local contents=`cat $BLKLIST_FILE`;
+
+            #read contents and remove comments
+            local contents=`cat $BLKLIST_FILE | grep -v '^#'`;
             BLKLIST=`echo $contents $BLKLIST | tr ' ' ','`;
         fi
 
@@ -154,8 +169,8 @@ function db_import_tables()
                 fi
             done
         fi
-        
-        if [ "$BLKLIST" != "" ]; then
+
+        if [ -n "$BLKLIST" ]; then
             for exclude in $BLKLIST; do
                 if [ "$exclude" == "$table" ]; then
                     black=1;
@@ -170,13 +185,17 @@ function db_import_tables()
             #import data from table
             db_import_table `echo $table | sed "s#$NEW_DB\.\(.*\)#\1#g"`;
         else
-            show_message 1 "Blacklisted: $table";
+            show_message 1 "BLACKLISTED: $table";
+            TAB_SKIP=$[ $TAB_SKIP + 1 ];
         fi
+
+        #increment tot table total
+        TAB_TOTL=$[ $TAB_TOTL + 1 ];
     done
 }
 
 ##
-# Import a single talble into the new database
+# Import a single table into the new database
 # @param string $1 the table name
 #
 function db_import_table()
@@ -184,13 +203,15 @@ function db_import_table()
     local table=$1;
     
     #import the data
-    show_message 1 "Importing Table: $table"
+    show_message 1 "IMPORT: $table"
     mysqldump --default-character-set=$ENCODING --no-create-db --no-create-info `get_credentials o` $OLD_DB $table | sed -f $FILTER | mysql `get_credentials n` $NEW_DB;
     
     if [ $? -eq 0 ]; then
-        show_message 1 "Import successful: $table";
+        show_message 1 "FINISHED: $table";
+        TAB_CONV=$[ $TAB_CONV + 1 ];
     else
-        show_message 2 "Import failed: $table"
+        show_message 2 "FAILED: $table";
+        TAB_SKIP=$[ $TAB_SKIP + 1 ];
     fi
 }
 
@@ -203,7 +224,7 @@ function show_message()
 {
     if [ "$VERBOSE" == 1 ]; then
         if [ $1 -eq 1 ]; then
-            echo "--- "$2;
+            echo "  "$2;
         else
             echo "ERROR: "$2 >&2;
         fi
@@ -211,8 +232,38 @@ function show_message()
 }
 
 ##
+# show the user license
+#
+function show_license()
+{
+    show_message 1 "mysqltr Ver $VERSION for Linux"
+    show_message 1 "Copyright (C) 2013  S. Fleming"
+    show_message 1 "This program comes with ABSOLUTELY NO WARRANTY; for details type use flag \`--license'."
+    show_message 1 "This is free software, and you are welcome to redistribute it"
+    show_message 1 "under certain conditions;";
+}
+
+function show_help
+{
+    show_message 1 "Usage: mysqltr --from=user@host[:port]/database --to=user@host[:port]/database [OPTIONS]"
+    show_message 1 "    --help                      Display this help and exit"
+    show_message 1 "    --encoding=encoding         Target encoding. Default is utf8"
+    show_message 1 "    --collation=collation       Target collation. Default is utf8_general_ci"
+    show_message 1 "    --engine=engine             Target database engine. Default is InnoDB"
+    show_message 1 "    --blacklist=table(s)        Table blacklist. Comma separated list"
+    show_message 1 "    --blacklist-file=file       Path to blacklist file. Default is filters/blacklist"
+    show_message 1 "    --whitelist=table(s)        Table whitelist. Comma separated list"
+    show_message 1 "    --whitelist-file=file       Path to whitelist file. Default is filters/whitelist"
+    show_message 1 "    --filter=file               Path to filter file. Filters use sed regex. Default is filters/filter.sed"
+    show_message 1 "    --from-passwd=password      Source database password"
+    show_message 1 "    --to-passwd=password        Destination database password"
+    show_message 1 "    --silent                    Suppress messages";
+}
+
+##
 # get the user credentials
 # @param string $1 old or new credentials
+#
 function get_credentials()
 {
     if [ "$1" == "o" ]; then
@@ -229,18 +280,6 @@ function get_credentials()
         fi
     fi
     echo $creds;
-}
-
-##
-# show the user license
-#
-function show_license()
-{
-    show_message 1 "mysqltr Ver $VERSION for Linux"
-    show_message 1 "Copyright (C) 2013  S. Fleming"
-    show_message 1 "This program comes with ABSOLUTELY NO WARRANTY; for details type use flag \`--license'."
-    show_message 1 "This is free software, and you are welcome to redistribute it"
-    show_message 1 "under certain conditions;";
 }
 
 ##
@@ -309,8 +348,6 @@ for opt in ${keys[*]}; do
     esac
 done
 
-VERSION=0.1;
-
 #verbosity
 VERBOSE=`get_value_by_key silent 1 0`;
 
@@ -344,8 +381,25 @@ BLKLIST_FILE=`get_value_by_key blacklist-file ./filters/blacklist`;
 #set the whitelist file
 WHTLIST_FILE=`get_value_by_key whitelist-file ./filters/whitelist`;
 
+#set the license flag
+LICENSE=`get_value_by_key license 0 1`;
+
+#set the help flag
+HELP=`get_value_by_key help 0 1`;
+
 #show the license
 show_license;
+
+#show license and quit?
+if [ $LICENSE -eq 1 ]; then
+    exit 0;
+fi
+
+#show help and quit?
+if [ $HELP -eq 1 ]; then
+    show_help;
+    exit 0;
+fi
 
 #get the old database password
 if [ "$OLD_DB" != "" ] && [ "$OLD_DB_PASS" == "" ]; then
@@ -358,7 +412,7 @@ fi
 OLD_DB_EXISTS=`db_exists o`;
 
 if [ $OLD_DB_EXISTS -eq 0 ]; then
-    show_message 2 "Database $OLD_DB doesn't exist!";
+    show_message 2 "Could not connect to $OLD_DB with the supplied credentials";
     exit 1
 fi
 
@@ -374,18 +428,19 @@ NEW_DB_EXISTS=`db_exists n`;
 
 #check if new database exists
 if [ $NEW_DB_EXISTS -eq 1 ];then
-    echo -n "Database $NEW_DB already exists. Overwrite this database? [y/n]: "
+    echo "Database $NEW_DB already exists. WARNING: all data will be deleted!";
+    echo -n "Overwrite this database? [y/n]: ";
     read proceed;
     case $proceed in
     y|Y) 
-        #drop the new database
+        #drop the database
         db_drop;
         
         #create the new database
         db_create
     ;;
     *)
-        show_message 2 "Encoding cancelled!";
+        show_message 2 "FAILURE: Conversion/Import cancelled";
         exit 1;
     ;;
     esac
@@ -399,4 +454,7 @@ fi
 db_import_structure && db_import_tables;
 
 #bye bye
-show_message 1 "Conversion/Import Complete!";
+show_message 1 "COMPLETED";
+show_message 1 "Tables converted: $TAB_CONV";
+show_message 1 "Tables skipped: $TAB_SKIP";
+show_message 1 "Tables total: $TAB_TOTL";
