@@ -128,14 +128,18 @@ function db_import_tables()
         local black=0;
 
         if [ -f "$WHTLIST_FILE" ]; then
-            WHTLIST="$WHTLIST `cat $WHTLIST_FILE`";
+            local contents=`cat $WHTLIST_FILE`;
+            WHTLIST=`echo $contents $WHTLIST | tr ' ' ','`;
         fi
 
         if [ -f "$BLKLIST_FILE" ]; then
-            BLKLIST="$BLKLIST `cat $BLKLIST_FILE`";
+            local contents=`cat $BLKLIST_FILE`;
+            BLKLIST=`echo $contents $BLKLIST | tr ' ' ','`;
         fi
 
-        if [ "$WHTLIST" != "" ]; then
+        OIFS=$IFS;
+        IFS=',';
+        if [ "$WHTLIST" != "" ] || [ "$WHTLIST" != " " ]; then
             for include in $WHTLIST; do
                 if [ "$include" == "$table" ]; then
                     white=1;
@@ -153,9 +157,8 @@ function db_import_tables()
                     break;
                 fi
             done
-        else
-            black=0;
         fi
+        IFS=$OIFS;
 
         # import and encode the table data
         if [ $white -eq 1 ] && [ $black -eq 0 ]; then
@@ -178,7 +181,7 @@ function db_import_table()
     
     #import the data
     show_message 1 "Importing Table: $table"
-    mysqldump --default-character-set=$ENCODING --no-create-db --no-create-info -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT $OLD_DB $table | sed -f $FILTER | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
+    mysqldump --default-character-set=$ENCODING --no-create-db --no-create-info `echo get_credentials o` $OLD_DB $table | sed -f $FILTER | mysql `echo get_credentials n` $NEW_DB;
     
     if [ $? -eq 0 ]; then
         show_message 1 "Import successful: $table";
