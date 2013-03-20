@@ -27,7 +27,7 @@ Change the directory:
 $ cd ./mysqltr-0.1/
 
 Edit/add regular expressions for custom filters
-$ vim ./filters/chars.sed
+$ vim ./filters/filter.sed
 
 Convert your database:
 $ ./mysqltr --from=user@127.0.0.1:3306/database1 --to=user@127.0.0.1:3306/database2
