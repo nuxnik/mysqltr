@@ -18,13 +18,14 @@
 # 
 # 
 # USE:
-# $ encodedb --from=user@host:port/dbname [--from-passwd=pass] 
+# $ mysqltr  --from=user@host:port/dbname [--from-passwd=pass] 
 #            --to=user@host:port/dbname [--to-passwd=pass] 
 #            --encoding=encoding 
 #            --collation=collation
 #            --engine=engine type
-#            --blacklist=table(s) 
-#            --whitelist=table(s) 
+#            --blacklist=table(s)
+#            --whitelist=table(s)
+#            --filter=filter file
 #            --help 
 #            --silent 
 #
@@ -37,9 +38,9 @@
 function db_exists()
 {
     if [ "$1" == "o" ]; then 
-        mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT -se "use $OLD_DB" 2> /dev/null;
+        mysql `get_credentials o` -se "use \`$OLD_DB\`" 2> /dev/null;
     else
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -se "use $NEW_DB" 2> /dev/null;
+        mysql `get_credentials n` -se "use \`$NEW_DB\`" 2> /dev/null;
     fi
     if [ $? -eq 0 ]; then
         local status=1;
@@ -57,7 +58,7 @@ function db_create()
     if [ `db_exists n` -eq 0 ]; then
         
         #create databsae with proper encoding
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -Bse "CREATE DATABASE $NEW_DB; ALTER DATABASE $NEW_DB DEFAULT CHARACTER SET $ENCODING COLLATE $COLLATION";
+        mysql `get_credentials n` -Bse "CREATE DATABASE \`$NEW_DB\`; ALTER DATABASE \`$NEW_DB\` DEFAULT CHARACTER SET $ENCODING COLLATE $COLLATION;";
         if [ $? -eq 0 ]; then
             show_message 1 "Database $NEW_DB successfully created!"
             local status=0
@@ -79,7 +80,7 @@ function db_drop()
     if [ $NEW_DB_EXISTS -eq 1 ]; then
         
         #create databsae with proper encoding
-        mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT -Bse "DROP DATABASE $NEW_DB;";
+        mysql `get_credentials n` -Bse "DROP DATABASE \`$NEW_DB\`;";
         if [ $? -eq 0 ]; then
             show_message 1 "Database $NEW_DB successfully dropped!"
             local status=0
@@ -101,7 +102,7 @@ function db_import_structure()
 {
     #import the structure and change the structure to utf8
     show_message 1 "Importing Structure from $OLD_DB to $NEW_DB";
-    mysqldump -d -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
+    mysqldump -d `get_credentials o` $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql `get_credentials n` $NEW_DB;
     if [ $? -eq 0 ]; then
         show_message 1 "Database structure successfully imported!"
     else
@@ -117,36 +118,52 @@ function db_import_structure()
 function db_import_tables()
 {
     #get the tables from the old database
-    local tables=`mysql -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT $OLD_DB -Bse 'SHOW TABLES;'`;
-    
+    local creds=`get_credentials o`;
+    local tables=`mysql $creds $OLD_DB -Bse 'SHOW TABLES';`;
+
     #iterate through the tables
     for table in $tables; do
-        local break=0;
 
-        #blacklist table data?
-        for exclude in $BLKLIST; do
-            if [ "$exclude" == "$table" ]; then
-                break=1;
-                show_message 1 "Blacklisted: $table":
-            fi
-        done
+        local white=0;
+        local black=0;
 
-        #whitelist table data?
-        for include in $WHTLIST; do
-            if [ "$include" != "$table" ]; then
-                break=1;
-                show_message 1 "Blacklisted: $table":
-            fi
-        done
-    
-        if [ $break -eq 0 ]; then
+        if [ -f "$WHTLIST_FILE" ]; then
+            WHTLIST="$WHTLIST `cat $WHTLIST_FILE`";
+        fi
+
+        if [ -f "$BLKLIST_FILE" ]; then
+            BLKLIST="$BLKLIST `cat $BLKLIST_FILE`";
+        fi
+
+        if [ "$WHTLIST" != "" ]; then
+            for include in $WHTLIST; do
+                if [ "$include" == "$table" ]; then
+                    white=1;
+                    break;
+                fi
+            done
+        else
+            white=1;
+        fi
+        
+        if [ "$BLKLIST" != "" ]; then
+            for exclude in $BLKLIST; do
+                if [ "$exclude" == "$table" ]; then
+                    black=1;
+                    break;
+                fi
+            done
+        else
+            black=0;
+        fi
+
+        # import and encode the table data
+        if [ $white -eq 1 ] && [ $black -eq 0 ]; then
         
             #import data from table
             db_import_table `echo $table | sed "s#$NEW_DB\.\(.*\)#\1#g"`;
         else
-        
-            #remove unwanted tables
-            mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB -Bse "DROP TABLE $table;";
+            show_message 1 "Blacklisted: $table";
         fi
     done
 }
@@ -159,32 +176,14 @@ function db_import_table()
 {
     local table=$1;
     
-    #skip an entry in the loop?
-    break=0;
-
-    #blacklist table data?
-    for exclude in $BLKLIST; do
-        if [ "$exclude" == "$table" ]; then
-            break=1;
-            show_message 1 "Blacklisted: $table":
-        fi
-    done
-
-    #whitelist table data?
-    for include in $WHTLIST; do
-        if [ "$include" != "$table" ]; then
-            break=1;
-            show_message 1 "Blacklisted: $table":
-        fi
-    done
-
-    # import and encode the table data
-    if [ $break -eq 0 ]; then
-
-        # import the data
-        show_message 1 "Importing Table: $table"
-        mysqldump -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT --default-character-set=$ENCODING --no-create-db --no-create-info $OLD_DB $table | sed -f ./filters/filter.sed | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
-        show_message 1 "Import successful: $table"
+    #import the data
+    show_message 1 "Importing Table: $table"
+    mysqldump --default-character-set=$ENCODING --no-create-db --no-create-info -u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT $OLD_DB $table | sed -f $FILTER | mysql -u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT $NEW_DB;
+    
+    if [ $? -eq 0 ]; then
+        show_message 1 "Import successful: $table";
+    else
+        show_message 2 "Import failed: $table"
     fi
 }
 
@@ -202,6 +201,27 @@ function show_message()
             echo "ERROR: "$2 >&2;
         fi
     fi
+}
+
+##
+# get the user credentials
+# @param string $1 old or new credentials
+function get_credentials()
+{
+    if [ "$1" == "o" ]; then
+        if [ $OLD_DB_HOST == '127.0.0.1' ] || [  $OLD_DB_HOST == 'localhost'  ]; then
+            local creds="-u$OLD_DB_USER -p$OLD_DB_PASS -P$OLD_DB_PORT";
+        else
+            local creds="-u$OLD_DB_USER -p$OLD_DB_PASS -h$OLD_DB_HOST -P$OLD_DB_PORT";
+        fi
+    else
+        if [ $NEW_DB_HOST == '127.0.0.1' ] || [  $NEW_DB_HOST == 'localhost'  ]; then
+            local creds="-u$NEW_DB_USER -p$NEW_DB_PASS -P$NEW_DB_PORT";
+        else
+            local creds="-u$NEW_DB_USER -p$NEW_DB_PASS -h$NEW_DB_HOST -P$NEW_DB_PORT";
+        fi
+    fi
+    echo $creds;
 }
 
 ##
@@ -294,6 +314,15 @@ BLKLIST=`get_value_by_key blacklist`;
 #set the table whitelist
 WHTLIST=`get_value_by_key whitelist`;
 
+#set the table whitelist
+FILTER=`get_value_by_key filter './filters/filter.sed'`;
+
+#set the whitelist file
+BLKLIST_FILE=`get_value_by_key blacklist-file ./filters/blacklist`;
+
+#set the whitelist file
+WHTLIST_FILE=`get_value_by_key whitelist-file ./filters/whitelist`;
+
 #get the old database password
 if [ "$OLD_DB" != "" ] && [ "$OLD_DB_PASS" == "" ]; then
     echo -n "Password for $OLD_DB: ";
@@ -321,7 +350,7 @@ NEW_DB_EXISTS=`db_exists n`;
 
 #check if new database exists
 if [ $NEW_DB_EXISTS -eq 1 ];then
-    echo -n "Database $NEW_DB already exists. Would you overwrite this database? [y/n]: "
+    echo -n "Database $NEW_DB already exists. Overwrite this database? [y/n]: "
     read proceed;
     case $proceed in
     y|Y) 
