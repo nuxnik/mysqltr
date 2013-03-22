@@ -118,7 +118,14 @@ function db_import_structure()
 {
     #import the structure and change the structure to utf8
     show_message 1 "IMPORTING: $OLD_DB => $NEW_DB";
-    mysqldump -d `get_credentials o` $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql `get_credentials n` $NEW_DB;
+    
+    #exclude blacklisted tables from the import
+    local blacklist='';
+    for black in $BLKLIST_TABLES; do
+        blacklist="$blacklist --ignore-table=\`${OLD_DB}\`.\`$black\` ";
+    done 
+    
+    mysqldump -d `get_credentials o` `echo $blacklist` $OLD_DB | sed -e "s/COLLATE [^ ,]*/COLLATE $COLLATION/g" | sed -e "s/COLLATE=[^ ;]*/COLLATE=$COLLATION/g" | sed -e "s/CHARSET=[^ ;]*/CHARSET=$ENCODING/g" | sed -e "s/ENGINE=[^ ]*/ENGINE=$ENGINE/g" | sed -e "s/CHARSET=[^ ;]*;/CHARSET=$ENCODING COLLATE=$COLLATION;/g" | sed -e "s/CHARACTER SET [^ ]*/CHARACTER SET $ENCODING/g" | mysql `get_credentials n` $NEW_DB;
     if [ $? -eq 0 ]; then
         show_message 1 "FINISHED: Database Structure"
     else
@@ -140,48 +147,9 @@ function db_import_tables()
     #iterate through the tables
     for table in $tables; do
 
-        local white=0;
-        local black=0;
-
-        if [ -f "$WHTLIST_FILE" ]; then
-
-            #read contents and remove comments
-            local contents=`cat $WHTLIST_FILE | grep -v '^#'`;
-            WHTLIST=`echo $contents $WHTLIST | tr ' ' ','`;
-        fi
-
-        if [ -f "$BLKLIST_FILE" ]; then
-
-            #read contents and remove comments
-            local contents=`cat $BLKLIST_FILE | grep -v '^#'`;
-            BLKLIST=`echo $contents $BLKLIST | tr ' ' ','`;
-        fi
-
-        OIFS=$IFS;
-        IFS=',';
-        if [ "$WHTLIST" == "" ]; then
-            white=1;
-        else
-            for include in $WHTLIST; do
-                if [ "$include" == "$table" ]; then
-                    white=1;
-                    break;
-                fi
-            done
-        fi
-
-        if [ -n "$BLKLIST" ]; then
-            for exclude in $BLKLIST; do
-                if [ "$exclude" == "$table" ]; then
-                    black=1;
-                    break;
-                fi
-            done
-        fi
-        IFS=$OIFS;
-
         # import and encode the table data
-        if [ $white -eq 1 ] && [ $black -eq 0 ]; then
+        if [ `is_whitelisted $table` -eq 1 ] && [ `is_blacklisted $table` -eq 0 ]; then
+        
             #import data from table
             db_import_table `echo $table | sed "s#$NEW_DB\.\(.*\)#\1#g"`;
         else
@@ -213,6 +181,116 @@ function db_import_table()
         show_message 2 "FAILED: $table";
         TAB_SKIP=$[ $TAB_SKIP + 1 ];
     fi
+}
+
+##
+# Gets a list of whitelisted tables
+#
+function get_whitelisted_tables
+{
+    #get the tables from the old database
+    local creds=`get_credentials o`;
+    local tables=`mysql $creds $OLD_DB -Bse 'SHOW TABLES';`;
+    local whitelist='';
+
+    #iterate through the tables
+    for table in $tables; do
+
+        # import and encode the table data
+        if [ `is_whitelisted $table` -eq 1 ]; then
+            whitelist="$whitelist $table";
+        fi
+    done
+    
+    echo $whitelist;
+}
+
+##
+# Gets a list of blacklisted tables
+#
+function get_blacklisted_tables
+{
+    #get the tables from the old database
+    local creds=`get_credentials o`;
+    local tables=`mysql $creds $OLD_DB -Bse 'SHOW TABLES';`;
+    local blacklist='';
+
+    #iterate through the tables
+    for table in $tables; do
+
+        # import and encode the table data
+        if [ `is_blacklisted $table` -eq 1 ]; then
+            blacklist="$blacklist $table";
+        fi
+    done
+    
+    echo $blacklist;
+}
+
+##
+# Check if table is whitelisted
+# @param string $1 table name
+#
+function is_whitelisted
+{
+    local table=$1;
+    local white=0;
+
+    if [ -f "$WHTLIST_FILE" ]; then
+
+        #read contents and remove comments
+        local contents=`cat $WHTLIST_FILE | grep -v '^#'`;
+        WHTLIST=`echo $contents $WHTLIST | tr ' ' ','`;
+    fi
+
+    OIFS=$IFS;
+    IFS=',';
+    if [ "$WHTLIST" == "" ]; then
+        white=1;
+    else
+        for include in $WHTLIST; do
+            if [ "$include" == "$table" ]; then
+                white=1;
+                break;
+            fi
+        done
+    fi
+
+    IFS=$OIFS;
+
+    echo $white;
+}
+
+##
+# Checks if table is blacklisted
+# @param string $1 table name
+#
+function is_blacklisted
+{
+        local table=$1;
+        local black=0;
+
+        if [ -f "$BLKLIST_FILE" ]; then
+
+            #read contents and remove comments
+            local contents=`cat $BLKLIST_FILE | grep -v '^#'`;
+            BLKLIST=`echo $contents $BLKLIST | tr ' ' ','`;
+        fi
+
+        OIFS=$IFS;
+        IFS=',';
+
+        if [ -n "$BLKLIST" ]; then
+            for exclude in $BLKLIST; do
+                if [ "$exclude" == "$table" ]; then
+                    black=1;
+                    break;
+                fi
+            done
+        fi
+        IFS=$OIFS;
+        
+        echo $black;
 }
 
 ##
@@ -423,8 +501,12 @@ if [ "$NEW_DB" != "" ] && [ "$NEW_DB_PASS" == "" ]; then
     echo "";
 fi
 
-#old database exists?
+#new database exists?
 NEW_DB_EXISTS=`db_exists n`;
+
+#get white and black lists
+WHTLIST_TBLS=`get_whitelisted_tables`;
+BLKLIST_TBLS=`get_blacklisted_tables`;
 
 #check if new database exists
 if [ $NEW_DB_EXISTS -eq 1 ];then
